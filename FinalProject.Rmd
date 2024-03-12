@@ -1,0 +1,349 @@
+---
+title: "Classifying movement types by their properties"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(caret)
+library(egg)
+```
+
+```{r, data, cache=TRUE, echo=FALSE, message=FALSE, results=FALSE}
+orig.training.data<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv") %>%
+  select(classe, X:magnet_forearm_z) 
+
+### figuring out what the hell I'm looking at 
+training.final<-orig.training.data %>%
+  select(classe, starts_with(c('gyros','accel','magnet', 'roll','pitch','yaw', 'total'))) %>%
+  mutate(classe=factor(classe))
+
+set.seed(1221)
+
+inTrain<-createDataPartition(training.final$classe, 
+                             p=0.7, 
+                             list=FALSE)
+
+train.less<-training.final[inTrain,]
+
+training.n<-nrow(train.less)
+
+test.less<-training.final[-inTrain,]
+
+testing.n<-nrow(test.less)
+
+training.cols<-ncol(train.less)-1
+
+evaluation.data<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv") 
+
+quiz.question<-evaluation.data$problem_id
+
+evaluation.data<-evaluation.data %>%
+  select(starts_with(c('gyros','accel','magnet', 'roll','pitch','yaw', 'total')))
+```
+
+# Summary
+
+There is, apparently, much interest among exercise physiologists about not only how much people exercise, but also 'how well' they exercise. Data from 5 body-mounted sensors (with integrated accelerometers, magnetometers, and gyroscopes measured posturing attributes in 6 individuals performing dumbell curls in 5 ways; one was to specifications (Classe A), while the remainder (Classes B-E) were various violations governing the form used in Classe A. Made available through a CC BY-SA license collected by Velloso et al. (2013), these data were used to develop classifiers. After dropping most variables from the analysis, both an individual and model stacking approach was used. First, random forest (RF), Bagged classification tree (BCT), and a gradient boosting machine (GBM) were used to independently classify a training subset comprising `r testing.n` derived from the original testing set was used to generate classification models. The remainder of the original training set (n=`r testing.n`) was used to evaluate the performance of the classifiers when the Classe Variable is known. However, the predictions from the individual classifiers were also stacked to determine if this approach improved the classification outcome. 
+
+The accuracy estimates for the RF, BCT, and GBM classifiers were 0.993, 0.982, and 0.974, respectively, suggesting these techniques were able to often able to correctly identify the type of Classe. The stacked model performed slightly better (accuracy=0.994). These accuracy statistics suggest the individual classifiers will incorrectly identify the Classe of exercise in  7, 18, 26, and 6 cases for every 1,000 examined. 
+
+Although not provided here, the stacked classifier was used to predict the classe of exercise from a separate set of 20 individual cases.
+
+# Data
+
+The data were obtained from a website archived on the WayBackMachine (<http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har>) and were used in a scientific publication: 
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+The data includes gyroscopic, accelerometer, and magnetometer measurements from 5 sensors attached to each of 6 untrained individuals (aged 20-28) performing dumbell curls correctly (Classe A) or in one of four predetermined incorrect postures: 
+
+- throwing the elbows to the front (Class B), 
+- lifting the dumbbell only halfway (Class C), 
+- lowering the dumbbell only halfway (Class D), and 
+- throwing the hips to the front (Class E).
+
+# Methods
+
+### Pre-selecting variables from the 160 available in the training set
+
+The original training set provided for this assessment included ~160 measurement variables. Many of these variables were incomplete and which variables to include required some attention.
+
+The ultimate goal of this project (predicting the classe of activities in the original test data), the variables with no data for a given activity, such as 'amplitude_pitch_arm' were removed from the original training set. Removing these data from the original training set left `r training.cols` variables with no missing measurements. These `r training.cols` variables, including accel_arm_x were used as the predictor variables to classify Classe.
+
+### Splitting the original training set into sub-test and sub-test sets
+
+To determine the success of the classifiers, the original training set was further partitioned into a sub-training and sub-test sets (70/30 training/test split) using the createDataPartition function in the caret package.
+
+### Selecting classifiers
+
+Using the sub-training data, and a brief review of the caret package literature (https://topepo.github.io/caret/train-models-by-tag.html) and the course notes, 3 classification approaches were selected:
+
+- random forest (RF), 
+- bagged classification tree (BCT), and 
+- gradient boosting machine (GBM).
+
+### Cross-validation
+
+Cross-validation was performed using the training set data. A 10-fold cross-validation procedure was performed inside the train() function from the caret package. 
+
+The models derived from these techniques were used to predict the known Classe from the sub-test set. Additionally, the predictions from these 3 classifiers were further stacked and used (also in a RF) to further predict the known Classes and determine if the stacked model performed better than the individual classifiers.
+
+# Results of 3 individual and 1 stacked classification
+
+These results shown in Figures 1-4, along with those found in Table 1, suggest the predictors performed very well with the lowest accuracy being 97.4%. However, the stacked predictor tended to perform the best. The accuracy of the stacked classifier was 0.994 with a 95% confidence interval of 0.991 to 0.996. The stacked classifier was used to predict the Classes for the original test set (and to answer the questions in the quiz.)
+
+```{r, methods, cache=TRUE, results=FALSE, echo=FALSE, message=FALSE, include=FALSE}
+## Build three different models
+
+      ### Model 1: random forest
+            mod1 <- train(classe~., 
+                          method="rf", 
+                          data=train.less, 
+                          trControl = trainControl(method="cv",
+                          number=10))
+            
+      #### Model 2: Bagged CART
+            mod2 <- train(classe ~.,
+                          method="treebag",
+                          data=train.less, 
+                          trControl = trainControl(method="cv",
+                          number=10))
+            
+      #### Model3: gradient boosting machine
+            mod3 <- train(classe ~ ., 
+                          data=training.final, 
+                          method='gbm', verbose=FALSE, 
+                          trControl = trainControl(method="cv",
+                          number=10))
+            
+  ## Predict on the testing set 
+      pred1 <- predict(mod1, test.less)
+      pred2 <- predict(mod2, test.less)
+      pred3 <- predict(mod3, test.less)
+   
+  ## Fit a model to combines predictors
+      predDF <- data.frame(pred1,pred2,pred3, classe=test.less$classe)
+      combModFit <- train(classe ~.,method="rf",data=predDF)
+      comb.pred <- predict(combModFit, predDF)
+   
+  ## Testing errors
+      
+      rf.cm<-confusionMatrix(data=pred1, reference=test.less$classe) ## random forest
+      bcart.cm<-confusionMatrix(data=pred2, reference=test.less$classe) ## bagged CART
+      gbm.cm<-confusionMatrix(data=pred3, reference=test.less$classe) ## boosting
+      stacked.cm<-confusionMatrix(data=comb.pred, reference=test.less$classe) ## model stack
+      
+   #### Heatmaps
+           
+    total.obs<-test.less %>%
+      group_by(classe) %>%
+      summarize(total.obs=n()) %>%
+      rename(Reference=classe)
+    
+    ### random forest heatmap----------------------
+      
+        hm.data.rf<-as.data.frame(rf.cm$table)
+        
+        hm.data.rf.2<-hm.data.rf %>%
+          left_join(total.obs, by='Reference') %>%
+          mutate(percent.correct=round(Freq/total.obs*100,3),
+                 Prediction=factor(Prediction, levels=c('A','B','C','D','E')),
+                 Reference=factor(Reference, levels=c('E','D','C','B','A')))
+        
+        rf.figure<-ggplot(data=hm.data.rf.2, aes(x=Prediction, y=Reference, fill=percent.correct))+
+          geom_tile(color='white', show.legend=FALSE)+
+          geom_text(aes(label = Freq), color = "white", size = 4)+
+          scale_fill_gradientn(colors = hcl.colors(10, "RdYlBu")) +
+          xlab('Predicted classe')+
+          ylab('Actual classe')+
+          ggtitle('Random Forest')+
+          theme(plot.title = element_text(hjust = 0.5))
+    
+    ### bagged CART heatmap-------------------
+    
+        hm.data.bcart<-as.data.frame(bcart.cm$table)
+        
+        hm.data.bcart.2<-hm.data.bcart %>%
+          left_join(total.obs, by='Reference') %>%
+          mutate(percent.correct=round(Freq/total.obs*100,3),
+                 Prediction=factor(Prediction, levels=c('A','B','C','D','E')),
+                 Reference=factor(Reference, levels=c('E','D','C','B','A')))
+        
+        b.cart.figure<-ggplot(data=hm.data.bcart.2, aes(x=Prediction, y=Reference, fill=percent.correct))+
+          geom_tile(color='white', show.legend=FALSE)+
+          geom_text(aes(label = Freq), color = "white", size = 4)+
+          scale_fill_gradientn(colors = hcl.colors(10, "RdYlBu")) +
+          xlab('Predicted classe')+
+          ylab('Actual classe')+
+          ggtitle('Bagged CART')+
+          theme(plot.title = element_text(hjust = 0.5))
+        
+   ### gradient boosting machine heatmap---------------
+        
+        hm.data.gbm<-as.data.frame(gbm.cm$table)
+        
+        hm.data.gbm.2<-hm.data.gbm %>%
+          left_join(total.obs, by='Reference') %>%
+          mutate(percent.correct=round(Freq/total.obs*100,3),
+                 Prediction=factor(Prediction, levels=c('A','B','C','D','E')),
+                 Reference=factor(Reference, levels=c('E','D','C','B','A')))
+        
+        gbm.figure<-ggplot(data=hm.data.gbm.2, aes(x=Prediction, y=Reference, fill=percent.correct))+
+          geom_tile(color='white', show.legend=FALSE)+
+          geom_text(aes(label = Freq), color = "white", size = 4)+
+          scale_fill_gradientn(colors = hcl.colors(10, "RdYlBu")) +
+          xlab('Predicted classe')+
+          ylab('Actual classe')+
+          ggtitle('Gradient Boosting Machine')+
+          theme(plot.title = element_text(hjust = 0.5))
+        
+    ### stacked model heatmap--------------------
+        
+        hm.data.stacked<-as.data.frame(stacked.cm$table)
+        
+        hm.data.stacked.2<-hm.data.stacked %>%
+          left_join(total.obs, by='Reference') %>%
+          mutate(percent.correct=round(Freq/total.obs*100,3),
+                 Prediction=factor(Prediction, levels=c('A','B','C','D','E')),
+                 Reference=factor(Reference, levels=c('E','D','C','B','A')))
+        
+        stacked.figure<-ggplot(data=hm.data.stacked.2, aes(x=Prediction, y=Reference, fill=percent.correct))+
+          geom_tile(color='white', show.legend=FALSE)+
+          geom_text(aes(label = Freq), color = "white", size = 4)+
+          scale_fill_gradientn(colors = hcl.colors(10, "RdYlBu")) +
+          xlab('Predicted classe')+
+          ylab('Actual classe')+
+          ggtitle('Stacked Models')+
+          theme(plot.title = element_text(hjust = 0.5))
+        
+        
+combined.figure<-grid.arrange(rf.figure, b.cart.figure, gbm.figure, stacked.figure, nrow=1, ncol=4)
+
+### Table of results 
+
+      ###  RF
+
+      rf.stats<-as.data.frame(rf.cm$overall)
+      
+      rf.stats.2<-rf.stats %>%
+        rownames_to_column() %>%
+        rename(stat=1, 
+               Random.Forest=2)
+      
+      ###  bagged CART
+      
+      bcart.stats<-as.data.frame(bcart.cm$overall)
+      
+      bcart.stats.2<-bcart.stats %>%
+        rownames_to_column() %>%
+        rename(stat=1, 
+              Bagged.CART=2)
+      
+      
+      ###  GBM
+      
+      gbm.stats<-as.data.frame(gbm.cm$overall)
+      
+      gbm.stats.2<-gbm.stats %>%
+        rownames_to_column() %>%
+        rename(stat=1, 
+               Gradient.Boosting.Machine=2)
+      
+      ###  stacked
+      
+      stacked.stats<-as.data.frame(stacked.cm$overall)
+      
+      stacked.stats.2<-stacked.stats %>%
+        rownames_to_column() %>%
+        rename(stat=1, 
+               Model.Stacking=2)
+      
+## combined into a table
+      
+      combined.stats.data<-rf.stats.2 %>%
+        left_join(bcart.stats.2, by='stat') %>%
+        left_join(gbm.stats.2, by='stat') %>%
+        left_join(stacked.stats.2, by='stat') %>%
+        drop_na() %>%
+        mutate(Random.Forest=round(Random.Forest, 3),
+               Bagged.CART=round(Bagged.CART, 3), 
+               Gradient.Boosting.Machine=round(Gradient.Boosting.Machine, 3),
+               Model.Stacking=round(Model.Stacking, 3))%>%
+        pivot_longer(cols=2:5, names_to='ML.Algorithm', values_to='values') %>%
+        pivot_wider(id_cols=ML.Algorithm, names_from='stat', values_from='values') %>%
+        mutate(AccuracyPValue='<0.001', 
+               Accuracy_95=paste(AccuracyLower, 'to', AccuracyUpper, sep=' ')) %>%
+        select(ML.Algorithm, Accuracy, Accuracy_95, AccuracyNull, AccuracyPValue, Kappa)
+      
+```
+
+
+```{r, show.figures1, fig.width=6, fig.height=6/1.618, fig.align='center', echo=FALSE, fig.cap='Figure 1: Confusion matrix results of Random Forest between predicted and actual classes; numbers shown in cells are numbers in each category (e.g., actually in Classe A, but predicted to occur in Class B; values along diagonal were correctly classified; cells colored by proportion of actual Classe (rows) falling in each predicted Classe (columns); coloring of cells shows low (red) to high (blue)'}
+
+rf.figure
+
+```
+
+```{r, show.figures2, fig.width=6, fig.height=6/1.618, echo=FALSE, fig.align='center', fig.cap='Figure 2: Confusion matrix results of bagged classification trees between predicted and actual classes; numbers shown in cells are numbers in each category (e.g., actually in Classe A, but predicted to occur in Class B; values along diagonal were correctly classified; cells colored by proportion of actual Classe (rows) falling in each predicted Classe (columns); coloring of cells shows low (red) to high (blue)'}
+
+b.cart.figure
+
+```
+
+```{r, show.figures3, fig.width=6, fig.height=6/1.618, echo=FALSE, fig.align='center', fig.cap='Figure 3: Confusion matrix results of gradient boosting machines between predicted and actual classes; numbers shown in cells are numbers in each category (e.g., actually in Classe A, but predicted to occur in Class B; values along diagonal were correctly classified; cells colored by proportion of actual Classe (rows) falling in each predicted Classe (columns); coloring of cells shows low (red) to high (blue)'}
+
+gbm.figure
+
+```
+
+```{r, show.figures4, fig.width=6, fig.height=6/1.618, echo=FALSE, fig.align='center', fig.cap='Figure 4: Confusion matrix results of the stacked classification model between predicted and actual classes; numbers shown in cells are numbers in each category (e.g., actually in Classe A, but predicted to occur in CLass B; values along diagonal were correctly classified; cells colored by proportion of actual Classe (rows) falling in each predicted Classe (columns); coloring of cells shows low (red) to high (blue)'}
+
+stacked.figure
+
+```
+
+```{r, show.table, echo=FALSE}
+
+knitr::kable(combined.stats.data, 
+             caption = 'Table 1: Summary statistics of the random forest, bagged classification tree, gradient boosting machine, and stacked classifiers.',
+             col.names = c('Algorithm', 'Accuracy', 'Accuracy (95% CI)', 'Null Accuracy', 'Accuracy p-value', 'Kappa'),)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
